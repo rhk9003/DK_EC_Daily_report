@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-DKEC 日報產出工具 - Streamlit 版本
+DKEC 日報產出工具 - Web App
 """
 
-import streamlit as st
-import pandas as pd
-from datetime import datetime
+import os
 import io
+import base64
+from datetime import datetime
+from flask import Flask, render_template, request, jsonify, send_file
+import pandas as pd
 
-# 頁面設定
-st.set_page_config(
-    page_title="DKEC 日報產出工具",
-    page_icon="📊",
-    layout="wide"
-)
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
+
+# 確保上傳資料夾存在
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # 各平台欄位對應設定
+# 原始欄位 -> 輸出欄位
 PLATFORM_CONFIG = {
     'official': {
         'name': '官網',
@@ -100,6 +103,7 @@ def parse_date(date_str):
 
     date_str = str(date_str).strip()
 
+    # 嘗試多種格式
     formats = [
         '%Y/%m/%d',
         '%Y-%m-%d',
@@ -111,11 +115,12 @@ def parse_date(date_str):
 
     for fmt in formats:
         try:
-            dt = datetime.strptime(date_str[:19], fmt)
+            dt = datetime.strptime(date_str[:len(fmt.replace('%Y', '2025').replace('%m', '01').replace('%d', '01').replace('%H', '00').replace('%M', '00').replace('%S', '00'))], fmt)
             return dt.strftime('%Y/%m/%d')
         except:
             continue
 
+    # 如果都失敗，嘗試直接解析
     try:
         dt = pd.to_datetime(date_str)
         return dt.strftime('%Y/%m/%d')
@@ -123,11 +128,12 @@ def parse_date(date_str):
         return None
 
 
-def process_data(df, platform):
-    """處理資料，進行欄位對應"""
-    config = PLATFORM_CONFIG[platform]
+def process_official_data(df):
+    """處理官網資料"""
+    config = PLATFORM_CONFIG['official']
     result = pd.DataFrame()
 
+    # 欄位對應
     for source_col, target_col in config['column_mapping'].items():
         if source_col in df.columns:
             result[target_col] = df[source_col]
@@ -135,327 +141,300 @@ def process_data(df, platform):
             result[target_col] = None
 
     # 處理日期
-    date_source_cols = {
-        'official': '轉單日期時間',
-        'shopee': '訂單成立日期',
-        'momo': '轉單日'
-    }
-
-    source_col = date_source_cols.get(platform)
-    if source_col and source_col in df.columns:
-        target_col = config['date_column']
-        result[target_col] = df[source_col].apply(parse_date)
+    if '轉單日期時間' in df.columns:
+        result['訂單日期'] = df['轉單日期時間'].apply(parse_date)
 
     return result
 
 
-def read_excel_file(uploaded_file):
-    """讀取上傳的 Excel 檔案"""
-    filename = uploaded_file.name.lower()
+def process_shopee_data(df):
+    """處理蝦皮資料"""
+    config = PLATFORM_CONFIG['shopee']
+    result = pd.DataFrame()
 
-    # 根據副檔名選擇引擎
-    if filename.endswith('.xls') and not filename.endswith('.xlsx'):
-        # 舊版 .xls 格式
-        try:
-            xls = pd.ExcelFile(uploaded_file, engine='xlrd')
-        except ImportError:
-            raise Exception("不支援 .xls 格式，請將檔案另存為 .xlsx 格式後再上傳")
-    else:
-        # .xlsx 格式
-        xls = pd.ExcelFile(uploaded_file, engine='openpyxl')
+    # 欄位對應
+    for source_col, target_col in config['column_mapping'].items():
+        if source_col in df.columns:
+            result[target_col] = df[source_col]
+        else:
+            result[target_col] = None
+
+    # 處理日期
+    if '訂單成立日期' in df.columns:
+        result['訂單日期'] = df['訂單成立日期'].apply(parse_date)
+
+    return result
+
+
+def process_momo_data(df):
+    """處理 MOMO 資料"""
+    config = PLATFORM_CONFIG['momo']
+    result = pd.DataFrame()
+
+    # 欄位對應
+    for source_col, target_col in config['column_mapping'].items():
+        if source_col in df.columns:
+            result[target_col] = df[source_col]
+        else:
+            result[target_col] = None
+
+    # 處理日期
+    if '轉單日' in df.columns:
+        result['轉單日'] = df['轉單日'].apply(parse_date)
+
+    return result
+
+
+def read_excel_file(file_storage):
+    """讀取上傳的 Excel 檔案"""
+    try:
+        # 嘗試讀取 xlsx
+        xls = pd.ExcelFile(file_storage, engine='openpyxl')
+    except:
+        # 嘗試讀取 xls
+        file_storage.seek(0)
+        xls = pd.ExcelFile(file_storage, engine='xlrd')
 
     return xls
 
 
-def generate_report_html(df, platform, dates, total_amount):
-    """產生報表 HTML"""
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    """上傳並解析檔案"""
+    if 'file' not in request.files:
+        return jsonify({'error': '未上傳檔案'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': '未選擇檔案'}), 400
+
+    # 取得前端指定的平台
+    platform = request.form.get('platform')
+    if not platform or platform not in PLATFORM_CONFIG:
+        return jsonify({'error': '請先選擇平台'}), 400
+
+    try:
+        # 讀取 Excel 檔案
+        xls = read_excel_file(file)
+        sheet_names = xls.sheet_names
+
+        # 根據指定平台找到資料分頁
+        config = PLATFORM_CONFIG[platform]
+        source_sheet = config['source_sheet']
+
+        # 嘗試讀取指定分頁，如果不存在則讀取第一個分頁
+        if source_sheet in sheet_names:
+            df = pd.read_excel(xls, sheet_name=source_sheet)
+        else:
+            # 嘗試找包含「前日交易數據」的分頁
+            data_sheet = None
+            for sheet in sheet_names:
+                if '前日交易數據' in sheet:
+                    data_sheet = sheet
+                    break
+
+            if data_sheet:
+                df = pd.read_excel(xls, sheet_name=data_sheet)
+            else:
+                # 讀取第一個分頁
+                df = pd.read_excel(xls, sheet_name=0)
+
+        # 處理資料（依照指定平台）
+        if platform == 'official':
+            processed_df = process_official_data(df)
+            date_column = '訂單日期'
+        elif platform == 'shopee':
+            processed_df = process_shopee_data(df)
+            date_column = '訂單日期'
+        else:  # momo
+            processed_df = process_momo_data(df)
+            date_column = '轉單日'
+
+        # 取得可用日期列表
+        dates = processed_df[date_column].dropna().unique().tolist()
+        dates = [d for d in dates if d is not None]
+        dates.sort(reverse=True)
+
+        # 儲存處理後的資料到 session (使用檔案暫存)
+        session_id = datetime.now().strftime('%Y%m%d%H%M%S%f')
+        temp_file = os.path.join(app.config['UPLOAD_FOLDER'], f'{session_id}.pkl')
+        processed_df.to_pickle(temp_file)
+
+        return jsonify({
+            'success': True,
+            'platform': platform,
+            'platform_name': PLATFORM_CONFIG[platform]['name'],
+            'dates': dates,
+            'total_rows': len(processed_df),
+            'session_id': session_id
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'處理檔案時發生錯誤: {str(e)}'}), 500
+
+
+@app.route('/api/generate', methods=['POST'])
+def generate_report():
+    """產生日報圖片（支援多日期）"""
+    data = request.json
+    session_id = data.get('session_id')
+    selected_dates = data.get('dates', [])  # 改為接收多個日期
+    platform = data.get('platform')
+
+    # 相容舊的單日期格式
+    if not selected_dates and data.get('date'):
+        selected_dates = [data.get('date')]
+
+    if not all([session_id, selected_dates, platform]):
+        return jsonify({'error': '缺少必要參數'}), 400
+
+    try:
+        # 讀取暫存資料
+        temp_file = os.path.join(app.config['UPLOAD_FOLDER'], f'{session_id}.pkl')
+        if not os.path.exists(temp_file):
+            return jsonify({'error': '資料已過期，請重新上傳檔案'}), 400
+
+        df = pd.read_pickle(temp_file)
+
+        # 篩選多個日期
+        config = PLATFORM_CONFIG[platform]
+        date_column = config['date_column']
+
+        filtered_df = df[df[date_column].isin(selected_dates)].copy()
+
+        if len(filtered_df) == 0:
+            return jsonify({'error': f'找不到所選日期的資料'}), 400
+
+        # 計算總金額
+        amount_column = config['amount_column']
+        if amount_column in filtered_df.columns:
+            total_amount = pd.to_numeric(filtered_df[amount_column], errors='coerce').sum()
+        else:
+            # 嘗試找到對應的欄位
+            if platform == 'official':
+                total_amount = pd.to_numeric(filtered_df.get('折扣後金額', 0), errors='coerce').sum()
+            elif platform == 'shopee':
+                total_amount = pd.to_numeric(filtered_df.get('訂單總金額 (單)', 0), errors='coerce').sum()
+            else:
+                total_amount = pd.to_numeric(filtered_df.get('末端售價', 0), errors='coerce').sum()
+
+        # 只保留需要的欄位
+        output_columns = config['output_columns']
+        display_df = filtered_df[[col for col in output_columns if col in filtered_df.columns]].copy()
+
+        # 按日期排序（最新的在前）
+        display_df = display_df.sort_values(by=date_column, ascending=False)
+
+        # 產生 HTML 表格
+        date_display = '、'.join(selected_dates)
+        html_table = generate_html_report(display_df, platform, date_display, total_amount)
+
+        return jsonify({
+            'success': True,
+            'html': html_table,
+            'total_amount': f'{total_amount:,.0f}',
+            'row_count': len(filtered_df),
+            'dates': selected_dates
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'產生報表時發生錯誤: {str(e)}'}), 500
+
+
+def generate_html_report(df, platform, date, total_amount):
+    """產生 HTML 報表"""
     config = PLATFORM_CONFIG[platform]
+    platform_name = config['name']
 
-    # 格式化日期
-    if len(dates) == 1:
-        title_date = dates[0]
+    # 處理 NaN 值
+    df = df.fillna('')
+
+    # 格式化日期顯示（用於標題）
+    # 如果是多個日期，取第一個；如果是單一日期，直接使用
+    if '、' in date:
+        title_date = date.split('、')[0]
     else:
-        title_date = dates[0]
+        title_date = date
 
+    # 轉換日期格式 2026/02/03 -> 02/03
     try:
         date_parts = title_date.split('/')
         short_date = f"{date_parts[1]}/{date_parts[2]}"
     except:
         short_date = title_date
 
-    # 標題
+    # 根據平台產生不同標題
     if platform == 'official':
         title = f"官網每日訂單報表{short_date}"
     elif platform == 'shopee':
         title = f"{short_date} 蝦皮訂單"
-    else:
+    else:  # momo
         title = f"{short_date} MOMO訂單"
 
-    # 產生表格
+    # 產生表格 HTML（不使用 pandas to_html，自己建立以加入總計列）
     columns = list(df.columns)
+
+    # 表頭
+    header_html = '<tr>' + ''.join([f'<th>{col}</th>' for col in columns]) + '</tr>'
+
+    # 資料列
+    rows_html = ''
+    for _, row in df.iterrows():
+        cells = ''.join([f'<td>{row[col]}</td>' for col in columns])
+        rows_html += f'<tr>{cells}</tr>'
+
+    # 總計列（只顯示金額欄位的總計）
     amount_col = config['amount_column']
+    total_row_html = '<tr class="total-row">'
+    for col in columns:
+        if col == columns[0]:
+            total_row_html += '<td class="total-label">總計</td>'
+        elif col == amount_col:
+            total_row_html += f'<td class="total-value">{total_amount:,.0f}</td>'
+        else:
+            total_row_html += '<td></td>'
+    total_row_html += '</tr>'
 
     html = f'''
-    <style>
-        .report-container {{
-            font-family: 'Microsoft JhengHei', Arial, sans-serif;
-            background: white;
-            padding: 15px;
-        }}
-        .report-title {{
-            text-align: center;
-            border-bottom: 1px solid #000;
-            padding-bottom: 8px;
-            margin-bottom: 10px;
-        }}
-        .report-title h2 {{
-            font-size: 1.2em;
-            margin: 0;
-            text-decoration: underline;
-        }}
-        .report-table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 12px;
-            border: 1px solid #8ea9db;
-        }}
-        .report-table th {{
-            background: #4472c4;
-            color: white;
-            padding: 8px 6px;
-            text-align: center;
-            font-weight: bold;
-            border: 1px solid #8ea9db;
-            font-size: 11px;
-        }}
-        .report-table td {{
-            padding: 6px;
-            border: 1px solid #d9e2f3;
-            text-align: center;
-        }}
-        .report-table tbody tr:nth-child(odd) {{
-            background: #d9e2f3;
-        }}
-        .report-table tbody tr:nth-child(even) {{
-            background: white;
-        }}
-        .total-row {{
-            background: white !important;
-            font-weight: bold;
-        }}
-        .total-row td {{
-            border-top: 2px solid #4472c4;
-            padding-top: 10px;
-        }}
-        .total-label {{
-            color: #c00000;
-            text-align: right;
-            padding-right: 15px;
-        }}
-        .total-value {{
-            color: #c00000;
-        }}
-    </style>
-    <div class="report-container">
+    <div class="report-container" id="report-content">
         <div class="report-title">
             <h2>{title}</h2>
         </div>
-        <table class="report-table">
-            <thead>
-                <tr>
+        <div class="table-wrapper">
+            <table class="report-table">
+                <thead>{header_html}</thead>
+                <tbody>{rows_html}{total_row_html}</tbody>
+            </table>
+        </div>
+    </div>
     '''
-
-    for col in columns:
-        html += f'<th>{col}</th>'
-
-    html += '</tr></thead><tbody>'
-
-    for _, row in df.iterrows():
-        html += '<tr>'
-        for col in columns:
-            val = row[col] if pd.notna(row[col]) else ''
-            html += f'<td>{val}</td>'
-        html += '</tr>'
-
-    # 總計列
-    html += '<tr class="total-row">'
-    for i, col in enumerate(columns):
-        if i == 0:
-            html += '<td class="total-label">總計</td>'
-        elif col == amount_col:
-            html += f'<td class="total-value">{total_amount:,.0f}</td>'
-        else:
-            html += '<td></td>'
-    html += '</tr>'
-
-    html += '</tbody></table></div>'
 
     return html
 
 
-# 主程式
-def main():
-    st.title("📊 DKEC 日報產出工具")
-    st.caption("上傳訂單明細，快速產出日報表")
-
-    # 初始化 session state
-    if 'processed_df' not in st.session_state:
-        st.session_state.processed_df = None
-    if 'available_dates' not in st.session_state:
-        st.session_state.available_dates = []
-
-    # 步驟 1：選擇平台
-    st.subheader("① 選擇平台")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        official_btn = st.button("🌐 官網", use_container_width=True)
-    with col2:
-        shopee_btn = st.button("🦐 蝦皮", use_container_width=True)
-    with col3:
-        momo_btn = st.button("🛒 MOMO", use_container_width=True)
-
-    # 處理平台選擇
-    if official_btn:
-        st.session_state.platform = 'official'
-        st.session_state.processed_df = None
-    elif shopee_btn:
-        st.session_state.platform = 'shopee'
-        st.session_state.processed_df = None
-    elif momo_btn:
-        st.session_state.platform = 'momo'
-        st.session_state.processed_df = None
-
-    # 顯示目前選擇的平台
-    if 'platform' in st.session_state:
-        platform = st.session_state.platform
-        platform_name = PLATFORM_CONFIG[platform]['name']
-        st.success(f"已選擇：{platform_name}")
-
-        # 步驟 2：上傳檔案
-        st.subheader(f"② 上傳 {platform_name} 訂單明細")
-
-        uploaded_file = st.file_uploader(
-            "拖曳或點擊上傳 Excel 檔案",
-            type=['xlsx', 'xls'],
-            key=f"uploader_{platform}"
-        )
-
-        if uploaded_file is not None:
-            try:
-                with st.spinner('處理檔案中...'):
-                    xls = read_excel_file(uploaded_file)
-                    sheet_names = xls.sheet_names
-
-                    config = PLATFORM_CONFIG[platform]
-                    source_sheet = config['source_sheet']
-
-                    if source_sheet in sheet_names:
-                        df = pd.read_excel(xls, sheet_name=source_sheet)
-                    else:
-                        data_sheet = None
-                        for sheet in sheet_names:
-                            if '前日交易數據' in sheet:
-                                data_sheet = sheet
-                                break
-
-                        if data_sheet:
-                            df = pd.read_excel(xls, sheet_name=data_sheet)
-                        else:
-                            df = pd.read_excel(xls, sheet_name=0)
-
-                    processed_df = process_data(df, platform)
-                    date_column = config['date_column']
-
-                    dates = processed_df[date_column].dropna().unique().tolist()
-                    dates = [d for d in dates if d is not None]
-                    dates.sort(reverse=True)
-
-                    st.session_state.processed_df = processed_df
-                    st.session_state.available_dates = dates
-
-                    st.success(f"成功讀取 {len(processed_df)} 筆資料，{len(dates)} 個日期")
-
-            except Exception as e:
-                st.error(f"處理檔案時發生錯誤：{str(e)}")
-
-        # 步驟 3：選擇日期
-        if st.session_state.processed_df is not None and st.session_state.available_dates:
-            st.subheader("③ 選擇日報日期（可多選）")
-
-            selected_dates = st.multiselect(
-                "選擇要產生報表的日期",
-                options=st.session_state.available_dates,
-                default=[st.session_state.available_dates[0]] if st.session_state.available_dates else []
-            )
-
-            if selected_dates:
-                st.info(f"已選擇 {len(selected_dates)} 個日期：{', '.join(selected_dates)}")
-
-                # 產生報表按鈕
-                if st.button("📄 產生日報表", type="primary", use_container_width=True):
-                    config = PLATFORM_CONFIG[platform]
-                    date_column = config['date_column']
-                    amount_column = config['amount_column']
-
-                    filtered_df = st.session_state.processed_df[
-                        st.session_state.processed_df[date_column].isin(selected_dates)
-                    ].copy()
-
-                    # 只保留需要的欄位
-                    output_columns = config['output_columns']
-                    display_df = filtered_df[[col for col in output_columns if col in filtered_df.columns]].copy()
-                    display_df = display_df.sort_values(by=date_column, ascending=False)
-
-                    # 計算總金額
-                    if amount_column in filtered_df.columns:
-                        total_amount = pd.to_numeric(filtered_df[amount_column], errors='coerce').sum()
-                    else:
-                        total_amount = 0
-
-                    # 儲存結果
-                    st.session_state.display_df = display_df
-                    st.session_state.total_amount = total_amount
-                    st.session_state.selected_dates = selected_dates
-                    st.session_state.show_report = True
-
-        # 顯示報表結果
-        if st.session_state.get('show_report'):
-            st.subheader("📊 報表結果")
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("日期", ', '.join(st.session_state.selected_dates))
-            with col2:
-                st.metric("訂單數", f"{len(st.session_state.display_df)} 筆")
-            with col3:
-                st.metric("銷售金額總額", f"NT$ {st.session_state.total_amount:,.0f}")
-
-            # 產生 HTML 報表
-            report_html = generate_report_html(
-                st.session_state.display_df,
-                platform,
-                st.session_state.selected_dates,
-                st.session_state.total_amount
-            )
-
-            # 顯示報表
-            st.markdown("---")
-            st.markdown(report_html, unsafe_allow_html=True)
-
-            # 提示
-            st.markdown("---")
-            st.info("💡 提示：可以使用瀏覽器的截圖功能（如 Chrome 的開發者工具）來擷取報表圖片")
-
-            # 重新開始按鈕
-            if st.button("🔄 重新開始"):
-                for key in ['processed_df', 'available_dates', 'display_df',
-                           'total_amount', 'selected_dates', 'show_report', 'platform']:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                st.rerun()
+@app.route('/api/cleanup/<session_id>', methods=['DELETE'])
+def cleanup(session_id):
+    """清理暫存檔案"""
+    try:
+        temp_file = os.path.join(app.config['UPLOAD_FOLDER'], f'{session_id}.pkl')
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        return jsonify({'success': True})
+    except:
+        return jsonify({'success': False})
 
 
 if __name__ == '__main__':
-    main()
+    print("=" * 50)
+    print("DKEC 日報產出工具")
+    print("=" * 50)
+    print("請在瀏覽器開啟: http://127.0.0.1:5000")
+    print("按 Ctrl+C 停止服務")
+    print("=" * 50)
+    app.run(host='127.0.0.1', port=5000, debug=False)
+
