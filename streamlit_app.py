@@ -151,11 +151,19 @@ def process_data(df, platform):
 
 def read_excel_file(uploaded_file):
     """讀取上傳的 Excel 檔案"""
-    try:
+    filename = uploaded_file.name.lower()
+
+    # 根據副檔名選擇引擎
+    if filename.endswith('.xls') and not filename.endswith('.xlsx'):
+        # 舊版 .xls 格式
+        try:
+            xls = pd.ExcelFile(uploaded_file, engine='xlrd')
+        except ImportError:
+            raise Exception("不支援 .xls 格式，請將檔案另存為 .xlsx 格式後再上傳")
+    else:
+        # .xlsx 格式
         xls = pd.ExcelFile(uploaded_file, engine='openpyxl')
-    except:
-        uploaded_file.seek(0)
-        xls = pd.ExcelFile(uploaded_file, engine='xlrd')
+
     return xls
 
 
@@ -451,3 +459,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
