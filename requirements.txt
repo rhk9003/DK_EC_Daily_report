@@ -1,0 +1,7 @@
+flask
+pandas
+openpyxl
+xlrd
+Pillow
+jinja2
+werkzeug
