@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DKEC 工作進度追蹤</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+            <h1 class="text-xl font-bold text-gray-800">DKEC 工作進度追蹤</h1>
+            <div class="flex items-center gap-3">
+                <span id="last-updated" class="text-sm text-gray-400"></span>
+                <button onclick="showWeeklyReport()" class="px-3 py-1.5 text-sm bg-indigo-50 text-indigo-600 rounded-md hover:bg-indigo-100 transition">
+                    本週報告
+                </button>
+                <button onclick="loadDashboard()" class="px-3 py-1.5 text-sm bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200 transition">
+                    重新整理
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Stats Bar -->
+    <div class="max-w-6xl mx-auto px-4 py-6">
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4" id="stats-bar">
+            <div class="bg-white rounded-lg shadow-sm p-4 border-l-4 border-blue-500">
+                <div class="text-2xl font-bold text-gray-800" id="stat-total">0</div>
+                <div class="text-sm text-gray-500">總任務</div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm p-4 border-l-4 border-yellow-500">
+                <div class="text-2xl font-bold text-gray-800" id="stat-in-progress">0</div>
+                <div class="text-sm text-gray-500">進行中</div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm p-4 border-l-4 border-green-500">
+                <div class="text-2xl font-bold text-gray-800" id="stat-completed">0</div>
+                <div class="text-sm text-gray-500">已完成</div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm p-4 border-l-4 border-gray-400">
+                <div class="text-2xl font-bold text-gray-800" id="stat-pending">0</div>
+                <div class="text-sm text-gray-500">暫緩中</div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm p-4 border-l-4 border-purple-500">
+                <div class="text-2xl font-bold text-gray-800" id="stat-rate">0%</div>
+                <div class="text-sm text-gray-500">完成率</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Projects -->
+    <div class="max-w-6xl mx-auto px-4 pb-6" id="projects-container">
+        <!-- Rendered by JS -->
+    </div>
+
+    <!-- Weekly Log -->
+    <div class="max-w-6xl mx-auto px-4 pb-8">
+        <div class="bg-white rounded-lg shadow-sm p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">本週工作紀錄</h2>
+            <div id="weekly-log" class="space-y-2">
+                <!-- Rendered by JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Weekly Report Modal -->
+    <div id="report-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center">
+        <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <div class="p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold text-gray-800">本週工作報告</h2>
+                    <div class="flex gap-2">
+                        <button onclick="copyReport()" class="px-3 py-1.5 text-sm bg-indigo-50 text-indigo-600 rounded-md hover:bg-indigo-100 transition">
+                            複製報告
+                        </button>
+                        <button onclick="closeReport()" class="px-3 py-1.5 text-sm bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200 transition">
+                            關閉
+                        </button>
+                    </div>
+                </div>
+                <div id="report-content" class="prose prose-sm max-w-none whitespace-pre-wrap text-gray-700 font-mono text-sm leading-relaxed">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="max-w-6xl mx-auto px-4 py-6 text-center text-sm text-gray-400 border-t border-gray-100">
+        透過 Claude Code 對話更新任務
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
