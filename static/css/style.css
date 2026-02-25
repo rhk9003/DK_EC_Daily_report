@@ -1,0 +1,124 @@
+/* Progress bar animation */
+.progress-bar {
+  transition: width 0.5s ease;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.badge-in-progress {
+  background-color: #DBEAFE;
+  color: #1D4ED8;
+}
+
+.badge-completed {
+  background-color: #D1FAE5;
+  color: #047857;
+}
+
+.badge-pending {
+  background-color: #F3F4F6;
+  color: #6B7280;
+}
+
+.badge-cancelled {
+  background-color: #FEE2E2;
+  color: #991B1B;
+}
+
+/* Priority dots */
+.priority-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.priority-urgent {
+  background-color: #EF4444;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.3);
+}
+
+.priority-high {
+  background-color: #F97316;
+}
+
+.priority-medium {
+  background-color: #3B82F6;
+}
+
+.priority-low {
+  background-color: #D1D5DB;
+}
+
+/* Tags */
+.tag {
+  display: inline-block;
+  padding: 0 6px;
+  background-color: #F3F4F6;
+  color: #6B7280;
+  border-radius: 4px;
+  font-size: 0.7rem;
+}
+
+/* Overdue highlight */
+.overdue-highlight {
+  border-left: 3px solid #EF4444;
+  background-color: #FEF2F2;
+}
+
+/* Project collapse */
+.project-body {
+  max-height: 2000px;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.project-body.collapsed {
+  max-height: 0;
+}
+
+.project-chevron {
+  display: inline-block;
+  font-size: 0.7rem;
+  transition: transform 0.2s ease;
+  transform: rotate(90deg);
+}
+
+.project-chevron.rotated {
+  transform: rotate(0deg);
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .task-row .flex {
+    flex-direction: column;
+  }
+  .task-row .min-w-\[140px\] {
+    min-width: 100%;
+    margin-top: 0.5rem;
+  }
+}
+
+/* Print-friendly */
+@media print {
+  header, footer, button {
+    display: none !important;
+  }
+  .bg-white {
+    box-shadow: none !important;
+    border: 1px solid #e5e7eb;
+  }
+  .project-body.collapsed {
+    max-height: none;
+  }
+}
